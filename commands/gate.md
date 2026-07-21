@@ -1,11 +1,11 @@
 ---
-description: レビューゲート (Stop hook) の状態確認・ON/OFF・履歴
+description: Inspect, toggle and audit the review gate (Stop hook)
 argument-hint: "[status|on|off|here-off|here-on|log [n]|set <key> <value>]"
 allowed-tools: Bash(node:*)
 ---
 
-レビューゲートの現在の状態:
+Current state of the review gate:
 
 !`node "$HOME/.claude/hooks/review-gate/gate.mjs" $ARGUMENTS`
 
-上の出力をユーザーに日本語で簡潔に報告して。設定変更を求められていた場合は、それが反映されているかを確認して伝えること。
+Report the output above to the user concisely. If they asked for a configuration change, confirm that it took effect and say so.

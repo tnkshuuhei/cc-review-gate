@@ -1,5 +1,5 @@
-// レビュアの起動。claude を -p (headless) で読み取り専用に立ち上げ、
-// 1 行目の ALLOW: / BLOCK: だけを判定に使う。
+// Launching the reviewer: claude in -p (headless) mode, read-only, with only the first
+// line of its output (ALLOW: / BLOCK:) used as the verdict.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -9,10 +9,11 @@ import { fileURLToPath } from "node:url";
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-// 子プロセスの Stop フックが再びゲートを起動して無限に入れ子になるのを防ぐ目印。
+// Marker that keeps the child process's Stop hook from starting the gate again and
+// nesting forever.
 export const GUARD_ENV = "CLAUDE_REVIEW_GATE_ACTIVE";
 
-// レビュアに渡すツール。書き込み系は最初から渡さない。
+// The tools handed to the reviewer. Write tools are never handed over in the first place.
 const ALLOWED_TOOLS = [
   "Read",
   "Grep",
@@ -48,7 +49,7 @@ export function buildPrompt({ changedFiles, assistantText }) {
   const filesBlock =
     changedFiles.length > 0
       ? changedFiles.map((file) => `- ${file}`).join("\n")
-      : "(ファイル一覧を特定できなかった。git status / git diff から自分で範囲を判断すること)";
+      : "(The file list could not be determined. Work out the scope yourself from git status / git diff.)";
 
   const assistantBlock = assistantText
     ? [
@@ -64,12 +65,13 @@ export function buildPrompt({ changedFiles, assistantText }) {
     .replace("{{ASSISTANT_TEXT_BLOCK}}", assistantBlock);
 }
 
-// 出力の 1 行目だけを見る。判定できない出力は「通す」に倒す。
-// レビュア側の事故で作業が止まる方が、見落としより体験を壊すため。
+// Only the first line of the output is read. Anything we cannot turn into a verdict
+// falls through to "allow": the gate breaking its own way out of the user's work is
+// worse than a missed issue.
 export function parseVerdict(rawText) {
   const text = String(rawText ?? "").trim();
   if (!text) {
-    return { blocked: false, note: "レビュアが空の応答を返した" };
+    return { blocked: false, note: "reviewer returned an empty response" };
   }
 
   const firstLine = text.split(/\r?\n/, 1)[0].trim();
@@ -79,18 +81,19 @@ export function parseVerdict(rawText) {
   if (firstLine.startsWith("BLOCK")) {
     return { blocked: true, reason: text.replace(/^BLOCK:\s*/, "").trim() };
   }
-  return { blocked: false, note: `レビュアの応答形式が不正: ${firstLine.slice(0, 120)}` };
+  return { blocked: false, note: `malformed reviewer response: ${firstLine.slice(0, 120)}` };
 }
 
 export function runReviewer({ cwd, prompt, config }) {
   const bin = resolveClaudeBin();
   if (!bin) {
-    return { blocked: false, note: "claude 実行ファイルが見つからずレビューをスキップ" };
+    return { blocked: false, note: "claude executable not found; review skipped" };
   }
 
-  // --setting-sources は指定しない。空にすると設定ファイルだけでなく
-  // CLAUDE.md まで読まれなくなり、プロジェクト規範を知らないレビュアになる。
-  // MCP とスキルはレビューに使わないので切る（起動時 19.4k → 9.1k tok）。
+  // Deliberately not passing --setting-sources. Emptying it drops not just the settings
+  // files but CLAUDE.md too, which would leave the reviewer ignorant of the project's
+  // own conventions. MCP and skills are not used for reviewing, so those are cut
+  // (19.4k -> 9.1k startup tokens).
   const args = [
     "-p",
     "--output-format",
@@ -124,23 +127,23 @@ export function runReviewer({ cwd, prompt, config }) {
   if (result.error?.code === "ETIMEDOUT") {
     return {
       blocked: false,
-      note: `レビューが ${config.timeoutSeconds}s でタイムアウトした`
+      note: `review timed out after ${config.timeoutSeconds}s`
     };
   }
   if (result.status !== 0) {
     const detail = String(result.stderr || result.stdout || "").trim().slice(0, 300);
-    return { blocked: false, note: `レビュアが異常終了した: ${detail}` };
+    return { blocked: false, note: `reviewer exited abnormally: ${detail}` };
   }
 
   let payload;
   try {
     payload = JSON.parse(result.stdout);
   } catch {
-    return { blocked: false, note: "レビュアの出力が JSON として読めなかった" };
+    return { blocked: false, note: "reviewer output could not be parsed as JSON" };
   }
 
   if (payload?.is_error) {
-    return { blocked: false, note: `レビュアがエラーを返した: ${payload?.subtype ?? ""}` };
+    return { blocked: false, note: `reviewer returned an error: ${payload?.subtype ?? ""}` };
   }
 
   const verdict = parseVerdict(payload?.result);

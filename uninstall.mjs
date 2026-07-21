@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// cc-review-gate のアンインストーラ。
+// Uninstaller for cc-review-gate.
 //   node uninstall.mjs [--purge] [--dry-run]
 //
-// settings.json から Stop フックの登録を外し、フック本体と /gate コマンドを消す。
-// 設定・ログ (~/.claude/review-gate/) は既定で残す。--purge で消す。
+// Removes the Stop hook registration from settings.json and deletes the hook and the
+// /gate command. Config and logs (~/.claude/review-gate/) are kept by default; --purge
+// removes those too.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -21,7 +22,7 @@ function log(message) {
 
 function removeFromSettings() {
   if (!fs.existsSync(SETTINGS_PATH)) {
-    log("settings.json がありません（スキップ）");
+    log("No settings.json (skipped)");
     return;
   }
 
@@ -29,13 +30,13 @@ function removeFromSettings() {
   try {
     settings = JSON.parse(fs.readFileSync(SETTINGS_PATH, "utf8"));
   } catch {
-    log(`⚠️  ${SETTINGS_PATH} が読めませんでした。Stop フックの行は手動で消してください。`);
+    log(`⚠️  Could not read ${SETTINGS_PATH}. Remove the Stop hook entry by hand.`);
     return;
   }
 
   const stopGroups = settings?.hooks?.Stop;
   if (!Array.isArray(stopGroups)) {
-    log("Stop フックの登録はありませんでした");
+    log("No Stop hook registration found");
     return;
   }
 
@@ -48,13 +49,13 @@ function removeFromSettings() {
     );
     removed += before - group.hooks.length;
   }
-  // 空になったグループは残さない。
+  // Do not leave empty groups behind.
   settings.hooks.Stop = stopGroups.filter((group) => (group?.hooks ?? []).length > 0);
   if (settings.hooks.Stop.length === 0) delete settings.hooks.Stop;
   if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
 
   if (removed === 0) {
-    log("Stop フックの登録はありませんでした");
+    log("No Stop hook registration found");
     return;
   }
 
@@ -63,33 +64,33 @@ function removeFromSettings() {
     fs.copyFileSync(SETTINGS_PATH, `${SETTINGS_PATH}.bak-${stamp}`);
     fs.writeFileSync(SETTINGS_PATH, `${JSON.stringify(settings, null, 2)}\n`);
   }
-  log(`✓ settings.json から ${removed} 件のフック登録を削除しました（バックアップ: ${SETTINGS_PATH}.bak-${stamp}）`);
+  log(`✓ Removed ${removed} hook registration(s) from settings.json (backup: ${SETTINGS_PATH}.bak-${stamp})`);
 }
 
 function removeFiles() {
   const hookDir = path.join(CLAUDE_DIR, "hooks", "review-gate");
   if (fs.existsSync(hookDir)) {
     if (!DRY_RUN) fs.rmSync(hookDir, { recursive: true, force: true });
-    log(`✓ 削除: ${hookDir}`);
+    log(`✓ Removed: ${hookDir}`);
   }
 
   const commandPath = path.join(CLAUDE_DIR, "commands", "gate.md");
   if (fs.existsSync(commandPath)) {
     if (!DRY_RUN) fs.rmSync(commandPath, { force: true });
-    log(`✓ 削除: ${commandPath}`);
+    log(`✓ Removed: ${commandPath}`);
   }
 
   const stateDir = path.join(CLAUDE_DIR, "review-gate");
   if (!fs.existsSync(stateDir)) return;
   if (PURGE) {
     if (!DRY_RUN) fs.rmSync(stateDir, { recursive: true, force: true });
-    log(`✓ 削除: ${stateDir}`);
+    log(`✓ Removed: ${stateDir}`);
   } else {
-    log(`- 設定とログは残しました: ${stateDir} (消すなら --purge)`);
+    log(`- Config and logs kept: ${stateDir} (use --purge to remove them)`);
   }
 }
 
-log(DRY_RUN ? "cc-review-gate をアンインストールします (--dry-run)\n" : "cc-review-gate をアンインストールします\n");
+log(DRY_RUN ? "Uninstalling cc-review-gate (--dry-run)\n" : "Uninstalling cc-review-gate\n");
 removeFromSettings();
 removeFiles();
-log("\n完了しました。起動中の Claude Code は再起動してください。");
+log("\nDone. Restart any running Claude Code.");

@@ -1,28 +1,30 @@
 # cc-review-gate
 
-Claude Code がターンを終えようとした瞬間に、別プロセスの Claude に直前の変更をレビューさせるフックです。
-問題が見つかれば停止をブロックし、指摘をそのまま本体に差し戻して修正を続けさせます。
+A Stop hook that makes a second Claude review the changes right before Claude Code ends its turn.
+If the reviewer finds a real problem, the hook blocks the stop and feeds the findings back into the session, which then keeps working and fixes them.
 
-人間がレビューを頼み忘れても、コードを書いたセッションは必ず一度レビューを通ってから止まります。
+Nobody has to remember to ask for a review. Any session that wrote code passes through one before it is allowed to stop.
 
 ```
-あなた「この関数を直して」
-  → Claude が編集して終了しようとする
-  → [Stop フック] 変更を検出 → レビュア Claude が起動 → 診断
-  → BLOCK なら Claude は止まらず、指摘を読んで自分で直す
-  → ALLOW ならそのまま終了
+You: "fix this function"
+  -> Claude edits the file and tries to finish
+  -> [Stop hook] detects the edits -> spawns a reviewer Claude -> verdict
+  -> BLOCK: the session does not stop; it reads the findings and fixes them
+  -> ALLOW: the session finishes normally
 ```
 
-## 必要なもの
+日本語版は [README.ja.md](README.ja.md) にあります。
 
-- Claude Code（`claude` コマンドが PATH にあること）
-- Node.js 18 以上
-- macOS または Linux
+## Requirements
 
-Claude Code 2.1.216 で動作確認しています。
-レビュアの起動に `--effort` や `--tools` を使うため、これより古い版では動かない可能性があります。
+- Claude Code (the `claude` binary must be on `PATH`)
+- Node.js 18 or newer
+- macOS or Linux
 
-## インストール
+Verified on Claude Code 2.1.216.
+The reviewer is launched with `--effort` and `--tools`, so older versions may not work.
+
+## Install
 
 ```bash
 git clone https://github.com/tnkshuuhei/cc-review-gate.git
@@ -30,36 +32,34 @@ cd cc-review-gate
 node install.mjs
 ```
 
-インストーラがやることは 4 つです。
+The installer does four things.
 
-1. `hooks/review-gate/` を `~/.claude/hooks/review-gate/` にコピーする
-2. `commands/gate.md` を `~/.claude/commands/gate.md` にコピーする（`/gate` コマンドが使えるようになる）
-3. `~/.claude/review-gate/config.json` を作る（既にあれば触らない）
-4. `~/.claude/settings.json` の Stop フックに 1 行追加する
+1. Copies `hooks/review-gate/` to `~/.claude/hooks/review-gate/`
+2. Copies `commands/gate.md` to `~/.claude/commands/gate.md` (this is what gives you `/gate`)
+3. Creates `~/.claude/review-gate/config.json` (left alone if it already exists)
+4. Adds one entry to the `Stop` hooks in `~/.claude/settings.json`
 
-`settings.json` は書き換える前に `settings.json.bak-<日時>` としてバックアップを取ります。
-既存の Stop フック（通知など）は消しません。
-同じフックが登録済みなら何もしないので、何度実行しても壊れません。
+`settings.json` is backed up as `settings.json.bak-<timestamp>` before it is touched.
+Existing Stop hooks (notifications and the like) are preserved, and re-running the installer when the hook is already registered is a no-op — it is safe to run repeatedly.
 
-書き込む前に内容を確認したい場合は `--dry-run` を付けます。
+To see what would be written without writing it:
 
 ```bash
 node install.mjs --dry-run
 ```
 
-インストール後、起動中の Claude Code があれば再起動してください。
-`settings.json` は起動時に読まれます。
+Restart any running Claude Code session afterwards. `settings.json` is only read at startup.
 
-### 手動で入れる場合
+### Installing by hand
 
-インストーラを使わず自分で配置しても構いません。
+You can skip the installer and place the files yourself.
 
 ```bash
 cp -R hooks/review-gate ~/.claude/hooks/
 cp commands/gate.md ~/.claude/commands/
 ```
 
-そのうえで `~/.claude/settings.json` に次を足します。
+Then add this to `~/.claude/settings.json`:
 
 ```json
 {
@@ -80,158 +80,153 @@ cp commands/gate.md ~/.claude/commands/
 }
 ```
 
-`timeout` はフック全体の上限（秒）です。
-レビュア側のタイムアウト（既定 600 秒）より長くしておきます。
+`timeout` is the ceiling for the whole hook, in seconds.
+Keep it comfortably above the reviewer's own timeout (600s by default).
 
-## 動作確認
+## Verifying the install
 
-Claude Code を起動して `/gate` と打つと、現在の状態が出ます。
+Start Claude Code and type `/gate`. It prints the current state.
 
 ```
-review-gate: ON / このディレクトリ: 有効
+review-gate: ON / this directory: enabled
   model=opus effort=high timeout=600s
   maxBlocksPerTurn=2
   ...
 ```
 
-適当なリポジトリで何かコードを書かせてみてください。
-Claude が終了しようとしたところで、レビュアが動く数十秒の間があります。
-指摘が出た場合は、Claude が止まらずに修正を始めます。
+Then have Claude write some code in a throwaway repo.
+When it tries to finish, you get a pause of a few dozen seconds while the reviewer runs.
+If something is found, Claude does not stop — it starts fixing instead.
 
-判定の履歴は次で見られます。
+Verdict history:
 
 ```
 /gate log
 ```
 
 ```
-2026-07-21T12:32:03.366Z [block] $0.184 47s レビューゲートが問題を検出しました: ...
-2026-07-21T12:40:11.902Z [allow] $0.092 31s ALLOW: 変更は既存の呼び出し側と整合している
+2026-07-21T12:32:03.366Z [block] $0.184 47s Review gate found problems: ...
+2026-07-21T12:40:11.902Z [allow] $0.092 31s ALLOW: change is consistent with existing callers
 ```
 
-## 使い方
+## Usage
 
-`/gate` に続けてサブコマンドを渡します（`node ~/.claude/hooks/review-gate/gate.mjs <サブコマンド>` と同じです）。
+`/gate` takes a subcommand (equivalent to `node ~/.claude/hooks/review-gate/gate.mjs <subcommand>`).
 
-| コマンド | 動作 |
+| Command | Effect |
 | --- | --- |
-| `/gate` | 状態と設定を表示する |
-| `/gate off` | ゲートを止める |
-| `/gate on` | ゲートを動かす |
-| `/gate here-off` | いま開いているディレクトリ配下だけ除外する |
-| `/gate here-on` | その除外を解除する |
-| `/gate log 50` | 直近 50 件の判定履歴を表示する |
-| `/gate set model sonnet` | 設定値を書き換える |
+| `/gate` | Show state and configuration |
+| `/gate off` | Turn the gate off |
+| `/gate on` | Turn the gate on |
+| `/gate here-off` | Exclude the current directory tree only |
+| `/gate here-on` | Remove that exclusion |
+| `/gate log 50` | Show the last 50 verdicts |
+| `/gate set model sonnet` | Change a configuration value |
 
-## 設定
+## Configuration
 
-`~/.claude/review-gate/config.json` を直接編集するか、`/gate set <キー> <値>` で書き換えます。
+Edit `~/.claude/review-gate/config.json` directly, or use `/gate set <key> <value>`.
 
-| キー | 既定値 | 意味 |
+| Key | Default | Meaning |
 | --- | --- | --- |
-| `enabled` | `true` | ゲート全体の ON/OFF |
-| `model` | `opus` | レビュアのモデル |
-| `effort` | `high` | レビュアの思考量 |
-| `timeoutSeconds` | `600` | レビュアの制限時間。超えたら通す |
-| `maxBlocksPerTurn` | `2` | 同じターンでブロックできる回数の上限 |
-| `disabledPaths` | `[]` | ここに書いた絶対パス配下ではゲートを動かさない |
-| `ignoreGlobs` | 下記 | このパターンだけの変更ならレビューしない |
+| `enabled` | `true` | Master on/off switch |
+| `model` | `opus` | Reviewer model |
+| `effort` | `high` | Reviewer reasoning effort |
+| `timeoutSeconds` | `600` | Reviewer time limit; exceeding it allows the stop |
+| `maxBlocksPerTurn` | `2` | How many times a single turn may be blocked |
+| `disabledPaths` | `[]` | Absolute paths under which the gate never runs |
+| `ignoreGlobs` | see below | If a turn only touched these, skip the review |
 
-`ignoreGlobs` の既定値は、ドキュメント（`**/*.md`, `**/*.mdx`, `**/*.txt`）、ロックファイル、scratchpad、一時ディレクトリです。
-README を直しただけのターンでレビュアが起動しないようにするためのものです。
+`ignoreGlobs` defaults to documentation (`**/*.md`, `**/*.mdx`, `**/*.txt`), lock files, scratchpads and temp directories.
+This is what keeps the reviewer from firing on a turn that only edited a README.
 
-コストを抑えたい場合は、モデルを下げるのが一番効きます。
+If you want to spend less, lowering the model is by far the biggest lever.
 
 ```
 /gate set model sonnet
 /gate set effort medium
 ```
 
-## どういうときにレビュアが起動するか
+## When the reviewer actually runs
 
-毎ターン起動するわけではありません。
-起動をスキップする条件が 4 つあります。
+Not on every turn. There are four skip conditions.
 
-- 直前のターンでファイルを一つも編集していない（調査、質問、設定の確認だけのターン）
-- 編集したのが `ignoreGlobs` にマッチするファイルだけ
-- カレントディレクトリが `disabledPaths` 配下
-- 同じターンで既に `maxBlocksPerTurn` 回ブロックしている
+- The previous turn edited no files at all (research, questions, config lookups)
+- Every edited file matched `ignoreGlobs`
+- The working directory is under `disabledPaths`
+- The turn has already been blocked `maxBlocksPerTurn` times
 
-日常的な会話や調査では動かないため、常時 ON にしても体感はあまり変わりません。
+Ordinary conversation and investigation never trigger it, so leaving the gate on all the time barely changes how the tool feels.
 
-編集されたファイルの検出には、Claude Code が transcript に残す `file-history-delta` の記録を使っています。
-アシスタントの自己申告ではなく、実際に書き込まれたファイルの一覧です。
+Edited files are detected from the `file-history-delta` records Claude Code writes into the transcript.
+That is the list of files actually written to disk — not the assistant's own claim about what it did.
 
-## 判定できないときは必ず通す
+## When in doubt, it lets you through
 
-このゲートは全面的に fail-open で作ってあります。
-レビュアが異常終了した、タイムアウトした、出力の形式が想定と違った、`claude` が見つからなかった。
-どれも「通す」に倒れます。
+The gate is fail-open, everywhere.
+Reviewer crashed, timed out, produced output in an unexpected shape, `claude` not found on `PATH` — every one of those resolves to "allow".
 
-ゲート自身の事故で作業が止まる方が、見落としより体験を壊すからです。
-配布物としては特に、他人の環境で誤爆しても仕事が止まらないことを優先しています。
+A gate that halts your work because of its own accident damages the experience more than a missed issue does.
+For something other people install, keeping a misfire from stopping their work matters more than catching everything.
 
-レビュアのプロンプトも同じ方向に倒してあります。
-迷ったら ALLOW、ブロックするなら「このファイルのこの行が、この入力でこう壊れる」まで書く、という基準です。
-誤検知で 1 往復を無駄にすると、人はゲートを切ってしまうからです。
+The reviewer prompt leans the same way: when unsure, ALLOW; to block, it must name the file and line and say how the code breaks and on what input.
+One false positive costs a wasted round trip, and that is how people learn to turn a gate off.
 
-## レビュアが見ているもの
+## What the reviewer can see
 
-レビュア Claude は読み取り専用で起動します。
-渡してあるツールは `Read` / `Grep` / `Glob` と、読み取り系の git コマンド（`git diff`, `git status`, `git log`, `git show`, `git rev-parse`, `git blame`）だけです。
-書き込み系のツールは最初から渡していないため、レビュアがコードを直すことはありません。
+The reviewer runs read-only.
+It gets `Read` / `Grep` / `Glob` and read-only git commands (`git diff`, `git status`, `git log`, `git show`, `git rev-parse`, `git blame`) — nothing else.
+No write tools are handed to it in the first place, so it cannot "helpfully" edit your code.
 
-MCP サーバとスキルは切ってあります（起動時のトークンが 19.4k から 9.1k に減ります）。
-ただし設定ソースは切っていないので、プロジェクトの `CLAUDE.md` は読まれます。
-レビュアはプロジェクトの規範を知ったうえで判断します。
+MCP servers and skills are disabled for the reviewer (startup tokens drop from 19.4k to 9.1k).
+Setting sources are not disabled, so the project's `CLAUDE.md` is still loaded: the reviewer judges with your project's conventions in hand.
 
-ブロックの基準は `hooks/review-gate/prompts/review.md` に書いてあります。
+The blocking criteria live in `hooks/review-gate/prompts/review.md`.
 
-ブロックする対象は、具体的な失敗経路のあるバグ、握り潰されたエラー、セキュリティやデータ整合性のリスク、リポジトリの他の箇所との契約違反、明文化されたプロジェクト規則への違反、そして「やったと書いてあるのに実際にはやっていない」ケースです。
+It blocks on: bugs with a concrete failure path, swallowed errors, security or data-integrity risks, contract violations against the rest of the repo, violations of written project rules, and claims of work that was not actually done.
 
-ブロックしない対象は、スタイル、命名、書式、好み、テストの不足、書き方が違うだけの正しいリファクタリング、失敗経路を特定できない推測、そのターンより前から存在していた問題です。
+It does not block on: style, naming, formatting, preference, missing tests, correct-but-different refactors, speculation without an identified failure path, or anything that already existed before this turn.
 
-基準を変えたいときは `~/.claude/hooks/review-gate/prompts/review.md` を編集してください。
-出力の 1 行目を `ALLOW:` か `BLOCK:` で始める契約だけは変えないでください。
-判定はこの 1 行目だけを見ています。
+To change the criteria, edit `~/.claude/hooks/review-gate/prompts/review.md`.
+The one contract you must keep is that the first line of the output starts with `ALLOW:` or `BLOCK:` — the verdict is parsed from that line alone.
 
-指摘の言語も同じファイルの末尾で指定しています。
-既定は日本語です。
+### Language of the findings
 
-## コスト
+The findings are written in English. That instruction is the last paragraph of `prompts/review.md`; name another language there and nothing else has to change.
+The findings are consumed by the other Claude session as its next instruction, so they only have to be readable by whoever also reads `/gate log`.
 
-既定の設定（opus + effort high）で手元の 20 回分を集計した実測値は、1 回あたり中央値 0.28 ドル / 50 秒、最大で 1.04 ドル / 137 秒でした。
-変更の規模に素直に比例します。
+## Cost
 
-同じ期間のフック起動 70 回のうち、レビュアが実際に走ったのは 20 回です。
-残りは編集のないターンや、ドキュメントだけの変更としてスキップされています。
+With the defaults (opus + effort high), measured over 20 runs here: median $0.28 / 50s per review, worst case $1.04 / 137s.
+It scales pretty much linearly with the size of the change.
 
-実測値は `/gate log` に残るので、自分の使い方でいくらかかっているかはそこで確認できます。
+Over the same period the hook fired 70 times and the reviewer ran on 20 of them.
+The rest were turns with no edits, or documentation-only changes that were skipped.
 
-## アンインストール
+Your own numbers are in `/gate log`.
+
+## Uninstall
 
 ```bash
 node uninstall.mjs
 ```
 
-`settings.json` からフックの登録を外し（バックアップを取ってから）、フック本体と `/gate` コマンドを削除します。
-設定とログ（`~/.claude/review-gate/`）は残ります。
-まとめて消すなら `--purge` を付けてください。
+Removes the hook registration from `settings.json` (after backing it up) and deletes the hook and the `/gate` command.
+Configuration and logs under `~/.claude/review-gate/` are kept; add `--purge` to remove those too.
 
-一時的に止めたいだけなら、アンインストールせず `/gate off` で足ります。
+If you only want to pause it, `/gate off` is enough — no need to uninstall.
 
-## うまく動かないとき
+## Troubleshooting
 
-**レビュアが起動しない**
+**The reviewer never runs**
 
-`/gate` で `enabled` と、そのディレクトリが除外されていないかを確認します。
-そのうえで `/gate log` を見てください。
-スキップした理由（「直前ターンにコード変更なし」「変更が ignoreGlobs のみ」など）が記録されています。
+Check `enabled` and whether the directory is excluded with `/gate`.
+Then read `/gate log` — the skip reason is recorded there (no code changes in the previous turn, only `ignoreGlobs` matches, and so on).
 
-**`claude 実行ファイルが見つからずレビューをスキップ` とログに出る**
+**The log says the `claude` executable could not be found**
 
-フックはログインシェルを経由せずに起動するため、`claude` が PATH の標準的な場所にないと見つかりません。
-`CLAUDE_REVIEW_GATE_BIN` にフルパスを設定してください。
+Hooks are launched without going through a login shell, so `claude` is not found unless it sits in a standard `PATH` location.
+Set the full path in `CLAUDE_REVIEW_GATE_BIN`:
 
 ```json
 {
@@ -241,42 +236,41 @@ node uninstall.mjs
 }
 ```
 
-**毎回ブロックされて終われない**
+**It blocks every time and the turn never ends**
 
-`maxBlocksPerTurn`（既定 2）で打ち切られるので、無限には続きません。
-それでも煩わしければ、そのプロジェクトだけ `/gate here-off` で除外できます。
+`maxBlocksPerTurn` (2 by default) cuts it off, so it cannot loop forever.
+If it is still annoying, exclude that project with `/gate here-off`.
 
-**設定を変えたのに反映されない**
+**A config change had no effect**
 
-`config.json` は毎回読み直すため、Claude Code の再起動は不要です。
-再起動が要るのは `settings.json` を変えたときだけです。
+`config.json` is re-read on every run, so no restart is needed.
+Only `settings.json` changes require restarting Claude Code.
 
-## ファイル構成
+## Layout
 
 ```
 hooks/review-gate/
-  stop-gate.mjs        Stop フック本体。起動条件の判定とブロックの返却
-  gate.mjs             /gate の実体。設定の読み書きとログ表示
-  lib/config.mjs       設定・ブロック回数・ログの永続化
-  lib/transcript.mjs   transcript を読んで直前ターンの変更ファイルを取り出す
-  lib/reviewer.mjs     レビュア Claude の起動と判定のパース
-  prompts/review.md    レビュアへの指示。ブロック基準はここ
-commands/gate.md       /gate スラッシュコマンドの定義
-install.mjs            インストーラ
-uninstall.mjs          アンインストーラ
+  stop-gate.mjs        The Stop hook: decides whether to run, returns the block
+  gate.mjs             The /gate implementation: config read/write, log display
+  lib/config.mjs       Persistence for config, block counts, logs
+  lib/transcript.mjs   Reads the transcript for files changed in the last turn
+  lib/reviewer.mjs     Spawns the reviewer Claude, parses the verdict
+  prompts/review.md    Reviewer instructions; the blocking criteria live here
+commands/gate.md       The /gate slash command definition
+install.mjs            Installer
+uninstall.mjs          Uninstaller
 ```
 
-外部依存はありません。
-Node.js の標準モジュールだけで動きます。
+No dependencies. Node standard library only.
 
-## 実装上の注意点
+## Implementation notes
 
-レビュアも `claude` なので、そのプロセスが終了するとまた Stop フックが走ります。
-放置すると無限に入れ子になるため、レビュアの起動時に `CLAUDE_REVIEW_GATE_ACTIVE=1` を渡し、フックの先頭でこれを見て即座に抜けています。
+The reviewer is itself a `claude` process, so its exit fires the Stop hook again.
+Left alone that nests forever, so the reviewer is spawned with `CLAUDE_REVIEW_GATE_ACTIVE=1` and the hook bails out on that variable as its very first step.
 
-同じターンを何度もブロックし続けると往復が終わらないため、`session_id` とターン境界の uuid をキーにしてブロック回数を数え、上限で打ち切っています。
-記録は `~/.claude/review-gate/state.json` に直近 100 件だけ残ります。
+Blocking the same turn indefinitely would mean the round trips never end, so blocks are counted per `session_id` plus the turn-boundary uuid and cut off at the limit.
+The last 100 records are kept in `~/.claude/review-gate/state.json`.
 
-## ライセンス
+## License
 
 MIT

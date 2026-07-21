@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// レビューゲートの管理 CLI。
+// Management CLI for the review gate.
 //   node gate.mjs status | on | off | here-off | here-on | set <key> <value> | log [n]
 
 import fs from "node:fs";
@@ -12,8 +12,8 @@ const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 
 function printStatus() {
   const config = loadConfig();
-  const here = isPathDisabled(config, cwd) ? "無効 (このパスは除外)" : "有効";
-  console.log(`review-gate: ${config.enabled ? "ON" : "OFF"} / このディレクトリ: ${here}`);
+  const here = isPathDisabled(config, cwd) ? "disabled (path excluded)" : "enabled";
+  console.log(`review-gate: ${config.enabled ? "ON" : "OFF"} / this directory: ${here}`);
   console.log(`  model=${config.model} effort=${config.effort} timeout=${config.timeoutSeconds}s`);
   console.log(`  maxBlocksPerTurn=${config.maxBlocksPerTurn}`);
   console.log(`  ignoreGlobs=${config.ignoreGlobs.join(", ")}`);
@@ -28,7 +28,7 @@ function printLog(count) {
   try {
     raw = fs.readFileSync(LOG_PATH, "utf8");
   } catch {
-    console.log("ログはまだありません。");
+    console.log("No log entries yet.");
     return;
   }
   const lines = raw.trim().split("\n").filter(Boolean).slice(-count);
@@ -39,7 +39,7 @@ function printLog(count) {
       const secs = record.durationMs ? ` ${Math.round(record.durationMs / 1000)}s` : "";
       console.log(`${record.at} [${record.decision}]${cost}${secs} ${record.reason ?? ""}`);
     } catch {
-      // 壊れた行は飛ばす。
+      // Skip corrupted lines.
     }
   }
 }
@@ -75,11 +75,11 @@ switch (command) {
     const [key, ...valueParts] = rest;
     const rawValue = valueParts.join(" ");
     if (!key || !rawValue) {
-      console.error("使い方: set <key> <value>");
+      console.error("usage: set <key> <value>");
       process.exitCode = 1;
       break;
     }
-    // 数値・真偽値・カンマ区切り配列を素直に解釈する。
+    // Interpret numbers, booleans and comma-separated arrays at face value.
     let value = rawValue;
     if (/^\d+$/.test(rawValue)) value = Number(rawValue);
     else if (rawValue === "true" || rawValue === "false") value = rawValue === "true";

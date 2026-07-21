@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-// Stop フック本体。
+// The Stop hook.
 //
-// 直前ターンでコード変更があった場合だけ、読み取り専用の claude を別プロセスで立ち上げて
-// レビューさせる。BLOCK 判定なら {"decision":"block"} を返し、Claude を停止させずに
-// 修正を続けさせる。
+// Only when the previous turn changed code: spawn a read-only claude in a separate
+// process and have it review. On a BLOCK verdict, emit {"decision":"block"} so the
+// session does not stop and keeps working on the fixes instead.
 //
-// 判定できないとき（レビュア異常終了、タイムアウト、形式不正）は常に通す。
-// ゲート自身の事故で作業が止まる方が、見落としより体験を壊すため。
+// Whenever no verdict can be reached (reviewer crashed, timed out, malformed output),
+// always allow. A gate that halts your work through its own accident damages the
+// experience more than a missed issue does.
 
 import fs from "node:fs";
 import process from "node:process";
@@ -40,7 +41,8 @@ function block(reason, extra = {}) {
 }
 
 function main() {
-  // 再帰ガード: レビュア側の claude が停止したときに、この処理を再び走らせない。
+  // Recursion guard: the reviewer is itself a claude process, and its exit fires this
+  // same hook. Bail out before doing anything else.
   if (process.env[GUARD_ENV] === "1") return;
 
   const input = readHookInput();
@@ -52,10 +54,10 @@ function main() {
 
   const turn = analyzeLastTurn(input.transcript_path);
 
-  // 変更がないターン（調査・報告・設定確認だけ）はレビュアを起動しない。
-  // これが効くのでゲートを常時 ON にしても日常の体感が変わらない。
+  // Turns with no edits (research, reporting, checking settings) never spawn a reviewer.
+  // This is what makes leaving the gate on all the time feel like nothing changed.
   if (turn.changedFiles.length === 0 && turn.editToolCalls === 0) {
-    allow("直前ターンにコード変更なし");
+    allow("no code changes in the previous turn");
     return;
   }
 
@@ -63,14 +65,15 @@ function main() {
     (file) => !matchesAnyGlob(file, config.ignoreGlobs)
   );
   if (turn.changedFiles.length > 0 && meaningful.length === 0) {
-    allow("変更が ignoreGlobs のみ", { files: turn.changedFiles });
+    allow("only ignoreGlobs matches were changed", { files: turn.changedFiles });
     return;
   }
 
-  // 同じターンを何度もブロックし続けると往復が終わらないので上限で打ち切る。
+  // Blocking the same turn over and over would mean the round trips never end, so cut
+  // it off at the limit.
   const turnKey = `${input.session_id ?? "unknown"}:${turn.boundaryUuid ?? "unknown"}`;
   if (getBlockCount(turnKey) >= config.maxBlocksPerTurn) {
-    allow(`同一ターンのブロック上限 (${config.maxBlocksPerTurn}) に到達`);
+    allow(`block limit for this turn (${config.maxBlocksPerTurn}) reached`);
     return;
   }
 
@@ -81,7 +84,7 @@ function main() {
   const verdict = runReviewer({ cwd, prompt, config });
 
   if (!verdict.blocked) {
-    allow(verdict.note ?? "レビュー通過", {
+    allow(verdict.note ?? "review passed", {
       files: meaningful,
       costUsd: verdict.costUsd,
       durationMs: verdict.durationMs
@@ -93,10 +96,10 @@ function main() {
   const remaining = config.maxBlocksPerTurn - count;
   const footer =
     remaining > 0
-      ? "\n\n--- 上記はレビューゲートの指摘です。妥当かを自分で確かめ、直すべきものを直してから終了してください。指摘が誤りだと判断した場合は、その根拠を述べて終了して構いません。"
-      : "\n\n--- 上記はレビューゲートの指摘です。これがこのターン最後のゲート実行です。";
+      ? "\n\n--- The findings above come from the review gate. Verify them yourself, fix what should be fixed, then finish. If you judge a finding to be wrong, you may finish after stating why."
+      : "\n\n--- The findings above come from the review gate. This is the last gate run for this turn.";
 
-  block(`レビューゲートが問題を検出しました:\n\n${verdict.reason}${footer}`, {
+  block(`Review gate found problems:\n\n${verdict.reason}${footer}`, {
     files: meaningful,
     costUsd: verdict.costUsd,
     durationMs: verdict.durationMs,
@@ -107,7 +110,7 @@ function main() {
 try {
   main();
 } catch (error) {
-  // 例外時も停止を邪魔しない。stderr にだけ残す。
+  // Never let an exception here get in the way of stopping. Leave it on stderr only.
   const message = error instanceof Error ? error.message : String(error);
   process.stderr.write(`[review-gate] ${message}\n`);
 }

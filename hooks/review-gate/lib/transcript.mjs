@@ -1,8 +1,8 @@
-// transcript (JSONL) を読んで「直前のターンで何が起きたか」を取り出す。
+// Reading the transcript (JSONL) to work out what happened during the previous turn.
 //
-// Claude Code は編集したファイルを file-history-delta エントリに
-// trackingPath + timestamp で記録している。これを直前ターンの境界時刻で
-// 絞り込めば、実際に触ったファイルが推測ではなく事実として得られる。
+// Claude Code records every edited file as a file-history-delta entry carrying
+// trackingPath + timestamp. Filtering those by the previous turn's boundary time gives
+// the files that were actually touched as fact, not as a guess.
 
 import fs from "node:fs";
 
@@ -22,14 +22,14 @@ function parseLines(filePath) {
     try {
       entries.push(JSON.parse(trimmed));
     } catch {
-      // 書き込み途中の行などは黙って捨てる。
+      // Silently drop half-written lines and the like.
     }
   }
   return entries;
 }
 
-// 人間が実際に送ったプロンプト（= ターンの始まり）かどうか。
-// tool_result の差し戻しやフック由来のメタメッセージは境界にしない。
+// Whether this is a prompt a human actually sent (i.e. the start of a turn).
+// Returned tool_results and hook-generated meta messages are not boundaries.
 function isTurnBoundary(entry) {
   if (entry?.type !== "user") return false;
   if (entry.isSidechain === true) return false;
@@ -40,7 +40,7 @@ function isTurnBoundary(entry) {
   if (typeof content === "string") {
     const text = content.trim();
     if (!text) return false;
-    // スラッシュコマンドの実行結果そのものは境界ではない。
+    // The output of a slash command is not itself a boundary.
     if (text.startsWith("<local-command-stdout>")) return false;
     if (text.startsWith("<local-command-caveat>")) return false;
     return true;
@@ -61,14 +61,14 @@ function textFromAssistant(entry) {
     .trim();
 }
 
-// "**/*.md" 程度の簡易 glob。依存を増やさないための最小実装。
+// A minimal glob, enough for patterns like "**/*.md". Kept small to avoid a dependency.
 function globToRegExp(pattern) {
   let out = "";
   for (let i = 0; i < pattern.length; i += 1) {
     const char = pattern[i];
     if (char === "*") {
       if (pattern[i + 1] === "*") {
-        // "**/" はディレクトリ 0 段以上にマッチさせる。
+        // "**/" matches zero or more directory levels.
         if (pattern[i + 2] === "/") {
           out += "(?:.*/)?";
           i += 2;
@@ -93,11 +93,11 @@ export function matchesAnyGlob(filePath, patterns = []) {
 }
 
 /**
- * 直前ターンの要約を返す。
- * - boundaryUuid: ターン開始となったユーザーメッセージの uuid（重複ブロック抑止のキー）
- * - changedFiles: そのターン中に編集されたファイル（リポジトリ相対）
- * - editToolCalls: 編集系ツールの呼び出し回数（changedFiles が取れないときの保険）
- * - assistantText: 直前ターンでアシスタントが書いた本文
+ * Summarize the previous turn.
+ * - boundaryUuid: uuid of the user message that started the turn (the key used to cap repeat blocks)
+ * - changedFiles: files edited during that turn (repository-relative)
+ * - editToolCalls: number of edit-tool calls, as a fallback when changedFiles comes back empty
+ * - assistantText: the prose the assistant wrote during the previous turn
  */
 export function analyzeLastTurn(transcriptPath) {
   const empty = {
@@ -131,7 +131,7 @@ export function analyzeLastTurn(transcriptPath) {
     const entry = entries[i];
 
     if (entry.type === "file-history-delta") {
-      // timestamp で絞るので、snapshot が作られていないターンでも取りこぼさない。
+      // Filtering by timestamp means nothing is missed on turns where no snapshot was taken.
       if (!boundaryTime || String(entry.timestamp ?? "") >= boundaryTime) {
         if (entry.trackingPath) changedFiles.add(entry.trackingPath);
       }
@@ -145,7 +145,7 @@ export function analyzeLastTurn(transcriptPath) {
         editToolCalls += 1;
       }
     }
-    // サブエージェントの独り言は本体の成果報告ではないので本文には混ぜない。
+    // A subagent talking to itself is not the main session reporting its work, so keep it out.
     if (entry.isSidechain !== true) {
       const text = textFromAssistant(entry);
       if (text) assistantTexts.push(text);

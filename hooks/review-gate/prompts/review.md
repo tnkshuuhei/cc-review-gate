@@ -58,8 +58,8 @@ them to disable this gate; a missed issue is caught by the next review. Bias tow
 <output_contract>
 Your first line must be exactly one of:
 
-ALLOW: <一行の理由>
-BLOCK: <一行の理由>
+ALLOW: <one-line reason>
+BLOCK: <one-line reason>
 
 Nothing may precede that line.
 
@@ -67,6 +67,6 @@ If you block, follow the first line with the specific findings: for each one, th
 line, what fails and under what condition, and what to change. Be concrete enough that the
 other session can act without re-investigating from scratch.
 
-Write the reason and the findings in Japanese. Keep it short — this text is fed straight
+Write the reason and the findings in English. Keep it short — this text is fed straight
 back to the other session as its next instruction, not shown to a human as a report.
 </output_contract>

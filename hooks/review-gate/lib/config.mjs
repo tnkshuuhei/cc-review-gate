@@ -1,6 +1,6 @@
-// レビューゲートの設定と状態の読み書き。
-// 設定は ~/.claude/review-gate/config.json、
-// ブロック回数の記録は ~/.claude/review-gate/state.json に置く。
+// Reading and writing the gate's configuration and state.
+// Configuration lives in ~/.claude/review-gate/config.json;
+// the block counts live in ~/.claude/review-gate/state.json.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -11,17 +11,17 @@ const CONFIG_PATH = path.join(GATE_DIR, "config.json");
 const STATE_PATH = path.join(GATE_DIR, "state.json");
 const LOG_PATH = path.join(GATE_DIR, "log.jsonl");
 
-// 同じターンを何度もブロックし続けると往復が終わらないので上限を設ける。
+// Blocking the same turn over and over would mean the round trips never end, hence a limit.
 const DEFAULTS = {
   enabled: true,
   model: "opus",
   effort: "high",
   timeoutSeconds: 600,
   maxBlocksPerTurn: 2,
-  // ここに列挙した絶対パス配下ではゲートを動かさない。
+  // The gate never runs under the absolute paths listed here.
   disabledPaths: [],
-  // このパターンにマッチするファイルだけの変更なら、レビューをスキップする。
-  // scratchpad と一時ディレクトリは成果物ではないので常に対象外。
+  // If a turn only changed files matching these patterns, skip the review.
+  // Scratchpads and temp directories are not deliverables, so they are always excluded.
   ignoreGlobs: [
     "**/*.md",
     "**/*.mdx",
@@ -65,7 +65,7 @@ export function isPathDisabled(config, cwd) {
   );
 }
 
-// 同一ターンでのブロック回数。キーは session_id + ターン境界の uuid。
+// How many times this turn has been blocked. Keyed by session_id + turn-boundary uuid.
 export function getBlockCount(key) {
   const state = readJson(STATE_PATH, {});
   return state[key]?.count ?? 0;
@@ -78,7 +78,7 @@ export function recordBlock(key) {
   entry.at = new Date().toISOString();
   state[key] = entry;
 
-  // 古い記録が無限に溜まらないよう、直近 100 件だけ残す。
+  // Keep only the last 100 records so old entries do not pile up forever.
   const keys = Object.keys(state).sort(
     (a, b) => String(state[a].at ?? "").localeCompare(String(state[b].at ?? ""))
   );
@@ -98,7 +98,7 @@ export function appendLog(record) {
       `${JSON.stringify({ at: new Date().toISOString(), ...record })}\n`
     );
   } catch {
-    // ログの失敗でゲート自体を落とさない。
+    // A logging failure must never take the gate itself down.
   }
 }
 
